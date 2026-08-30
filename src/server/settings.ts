@@ -22,6 +22,13 @@ export function createSettingsRepository(db: Database) {
     async setProviderEnabled(id: string, isEnabled: boolean) {
       await db`UPDATE provider_configs SET is_enabled = ${isEnabled}, updated_at = now() WHERE id = ${id}`;
     },
+    async updateProvider(id: string, input: { kind: ProviderKind; name: string; secret?: string; baseUrl?: string; model?: string; inputCnyPerMillion?: number; outputCnyPerMillion?: number; isEnabled: boolean }) {
+      if (input.secret) {
+        await db`UPDATE provider_configs SET kind = ${input.kind}, name = ${input.name}, base_url = ${input.baseUrl || null}, encrypted_secret = ${db.json(encrypt(input.secret))}, model = ${input.model || null}, input_cny_per_million = ${input.inputCnyPerMillion ?? 0}, output_cny_per_million = ${input.outputCnyPerMillion ?? 0}, is_enabled = ${input.isEnabled}, updated_at = now() WHERE id = ${id}`;
+      } else {
+        await db`UPDATE provider_configs SET kind = ${input.kind}, name = ${input.name}, base_url = ${input.baseUrl || null}, model = ${input.model || null}, input_cny_per_million = ${input.inputCnyPerMillion ?? 0}, output_cny_per_million = ${input.outputCnyPerMillion ?? 0}, is_enabled = ${input.isEnabled}, updated_at = now() WHERE id = ${id}`;
+      }
+    },
     async credential(kind: ProviderKind) {
       const rows = await db`SELECT encrypted_secret, base_url, model, input_cny_per_million, output_cny_per_million FROM provider_configs WHERE kind = ${kind} AND is_enabled = true ORDER BY updated_at DESC LIMIT 1`;
       if (!rows.length) return undefined;

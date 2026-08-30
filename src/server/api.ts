@@ -8,6 +8,7 @@ import type { ReviewQueue } from './queue.js';
 import { createSettingsRepository } from './settings.js';
 
 const providerSchema = z.object({ kind: z.enum(['openai', 'github', 'gitlab']), name: z.string().min(1).max(80), secret: z.string().min(8), baseUrl: z.string().url().optional().or(z.literal('')), model: z.string().max(120).optional(), inputCnyPerMillion: z.number().min(0).max(1_000_000).optional(), outputCnyPerMillion: z.number().min(0).max(1_000_000).optional(), isEnabled: z.boolean().default(true) });
+const providerUpdateSchema = providerSchema.extend({ secret: z.string().min(8).optional() });
 const policySchema = z.object({ budgetCny: z.number().min(0).max(1_000_000), fallbackModel: z.string().min(1).max(120), maxFiles: z.number().int().min(1).max(500), maxDiffLines: z.number().int().min(100).max(100_000) });
 const reviewSchema = z.object({ sourceUrl: z.string().url(), outputMode: z.enum(['report', 'publish']).default('report') });
 
@@ -37,6 +38,14 @@ export async function registerApi(app: FastifyInstance, db: Database, queue: Rev
   app.patch('/api/providers/:id', async (request) => {
     const body = parse(z.object({ isEnabled: z.boolean() }), request.body);
     await settings.setProviderEnabled((request.params as { id: string }).id, body.isEnabled);
+    return { ok: true };
+  });
+  app.put('/api/providers/:id', async (request, reply) => {
+    const id = (request.params as { id: string }).id;
+    const input = parse(providerUpdateSchema, request.body);
+    const exists = await db`SELECT id FROM provider_configs WHERE id = ${id}`;
+    if (!exists.length) return reply.code(404).send({ error: '服务商配置不存在' });
+    await settings.updateProvider(id, { ...input, baseUrl: input.baseUrl || undefined, isEnabled: input.isEnabled ?? true });
     return { ok: true };
   });
 

@@ -18,6 +18,7 @@ type WorkflowState = {
   sanitizedFiles: DiffFile[];
   staticComments: ReviewComment[];
   modelComments: ReviewComment[];
+  toolCalls: Array<{ id: string; detail: string; findings: number }>;
   allComments: ReviewComment[];
   truncated: boolean;
 };
@@ -30,6 +31,7 @@ const State = Annotation.Root({
   sanitizedFiles: Annotation<DiffFile[]>({ value: (_left, right) => right, default: () => [] }),
   staticComments: Annotation<ReviewComment[]>({ value: (_left, right) => right, default: () => [] }),
   modelComments: Annotation<ReviewComment[]>({ value: (_left, right) => right, default: () => [] }),
+  toolCalls: Annotation<Array<{ id: string; detail: string; findings: number }>>({ value: (_left, right) => right, default: () => [] }),
   allComments: Annotation<ReviewComment[]>({ value: (_left, right) => right, default: () => [] }),
   truncated: Annotation<boolean>({ value: (_left, right) => right, default: () => false })
 });
@@ -92,8 +94,9 @@ function makeGraph(context: Context, saver: PostgresSaver) {
     if (!enabled.includes('builtin-static-rules')) enabled.push('builtin-static-rules');
     const results = await runEnabledTools(state.files, enabled);
     const staticComments = results.flatMap((result) => result.comments);
-    await step(context.db, state.reviewId, 'tools', { tools: results.map(({ toolId, detail }) => ({ toolId, detail })), comments: staticComments.length });
-    return { staticComments };
+    const toolCalls = results.map(({ toolId, detail, comments }) => ({ id: toolId, detail, findings: comments.length }));
+    await step(context.db, state.reviewId, 'tools', { tools: toolCalls, comments: staticComments.length });
+    return { staticComments, toolCalls };
   };
 
   const review = async (state: WorkflowState) => {
@@ -114,7 +117,7 @@ function makeGraph(context: Context, saver: PostgresSaver) {
     const inputTokens = response.usage_metadata?.input_tokens ?? 0;
     const outputTokens = response.usage_metadata?.output_tokens ?? 0;
     const cost = costMicrocny(inputTokens, outputTokens, credential.inputCnyPerMillion, credential.outputCnyPerMillion);
-    const trace = await context.db`INSERT INTO review_traces (review_id, stage, tool_calls, raw_diff_ciphertext, sanitized_prompt, model_response, model, input_tokens, output_tokens, cost_microusd, cost_microcny) VALUES (${state.reviewId}, 'model_review', ${asJson([])}::jsonb, ${asJson(encrypt(state.files.map((file) => `FILE: ${file.path}\n${file.patch}`).join('\n\n')))}::jsonb, ${prompt}, ${content}, ${modelName || null}, ${inputTokens}, ${outputTokens}, 0, ${cost}) RETURNING id`;
+    const trace = await context.db`INSERT INTO review_traces (review_id, stage, tool_calls, raw_diff_ciphertext, sanitized_prompt, model_response, model, input_tokens, output_tokens, cost_microusd, cost_microcny) VALUES (${state.reviewId}, 'model_review', ${asJson(state.toolCalls)}::jsonb, ${asJson(encrypt(state.files.map((file) => `FILE: ${file.path}\n${file.patch}`).join('\n\n')))}::jsonb, ${prompt}, ${content}, ${modelName || null}, ${inputTokens}, ${outputTokens}, 0, ${cost}) RETURNING id`;
     await context.db`UPDATE reviews SET spent_microcny = spent_microcny + ${cost} WHERE id = ${state.reviewId}`;
     const modelComments = parseModelComments(content).map((comment) => ({ ...comment, evidence: [...comment.evidence, { source: 'trace', detail: String(trace[0].id) }] }));
     await step(context.db, state.reviewId, 'model_review', { model: modelName, inputTokens, outputTokens, cost, comments: modelComments.length });
