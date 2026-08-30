@@ -1,6 +1,6 @@
 import { Annotation, END, START, StateGraph } from '@langchain/langgraph';
 import { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
-import { ChatOpenAI } from '@langchain/openai';
+import { ChatOpenAICompletions } from '@langchain/openai';
 import type { Database } from './db.js';
 import { encrypt } from './crypto.js';
 import { loadChangeRequest, publishReviewReport, type CredentialLookup } from './providers.js';
@@ -64,6 +64,11 @@ function costMicrocny(input: number, output: number, inputCnyPerMillion: number,
   return Math.ceil(input * inputCnyPerMillion + output * outputCnyPerMillion);
 }
 
+function openaiBaseUrl(baseUrl?: string) {
+  const value = (baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
+  return /\/v\d+(?:[a-z]+)?$/i.test(value) ? value : `${value}/v1`;
+}
+
 function makeGraph(context: Context, saver: PostgresSaver) {
   const ingest = async (state: WorkflowState) => {
     const { provider, change } = await loadChangeRequest(state.sourceUrl, context.credentials);
@@ -111,7 +116,7 @@ function makeGraph(context: Context, saver: PostgresSaver) {
     const spent = Number(reviewRow[0]?.spent_microcny ?? 0);
     const modelName = budget > 0 && spent > budget * 0.7 ? policy[0]?.fallback_model : credential.model;
     const prompt = `请审查以下已脱敏的 PR/MR diff。只返回 JSON 数组，每个对象格式为 {"path":string,"line":number|null,"body":string}。只报告具体的正确性、安全性或可靠性问题；不要声称绝对确定，不要复述已脱敏的内容。评审意见必须使用中文。\n\n${state.sanitizedFiles.map((file) => `文件：${file.path}\n${file.patch}`).join('\n\n').slice(0, 110_000)}`;
-    const model = new ChatOpenAI({ model: modelName, apiKey: credential.token, configuration: credential.baseUrl ? { baseURL: credential.baseUrl } : undefined, temperature: 0 });
+    const model = new ChatOpenAICompletions({ model: modelName, apiKey: credential.token, configuration: { baseURL: openaiBaseUrl(credential.baseUrl) }, temperature: 0, maxRetries: 2 });
     const response = await model.invoke([{ role: 'system', content: '你是一名谨慎的代码评审工程师。只返回有效 JSON，所有评审意见使用简体中文。' }, { role: 'user', content: prompt }]);
     const content = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
     const inputTokens = response.usage_metadata?.input_tokens ?? 0;
