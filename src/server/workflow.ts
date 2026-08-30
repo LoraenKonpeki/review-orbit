@@ -64,6 +64,11 @@ function costMicrocny(input: number, output: number, inputCnyPerMillion: number,
   return Math.ceil(input * inputCnyPerMillion + output * outputCnyPerMillion);
 }
 
+function conservativeTokenEstimate(text: string) {
+  // 不引入 tokenizer；按 1 字符至少 1 Token 估算，宁可提前截断也不冒险超预算。
+  return text.length;
+}
+
 function openaiBaseUrl(baseUrl?: string) {
   const value = (baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
   return /\/v\d+(?:[a-z]+)?$/i.test(value) ? value : `${value}/v1`;
@@ -114,9 +119,34 @@ function makeGraph(context: Context, saver: PostgresSaver) {
     const reviewRow = await context.db`SELECT spent_microcny FROM reviews WHERE id = ${state.reviewId}`;
     const budget = Math.round(Number(policy[0]?.budget_cny ?? 0) * 1_000_000);
     const spent = Number(reviewRow[0]?.spent_microcny ?? 0);
-    const modelName = budget > 0 && spent > budget * 0.7 ? policy[0]?.fallback_model : credential.model;
-    const prompt = `请审查以下已脱敏的 PR/MR diff。只返回 JSON 数组，每个对象格式为 {"path":string,"line":number|null,"body":string}。只报告具体的正确性、安全性或可靠性问题；不要声称绝对确定，不要复述已脱敏的内容。评审意见必须使用中文。\n\n${state.sanitizedFiles.map((file) => `文件：${file.path}\n${file.patch}`).join('\n\n').slice(0, 110_000)}`;
-    const model = new ChatOpenAICompletions({ model: modelName, apiKey: credential.token, configuration: { baseURL: openaiBaseUrl(credential.baseUrl) }, temperature: 0, maxRetries: 2 });
+    // fallback_model 仅是历史兼容字段；不同 Provider 的模型能力和价格不可推断，预算控制统一通过截断和输出上限完成。
+    const modelName = credential.model;
+    const instructions = '请审查以下已脱敏的 PR/MR diff。只返回 JSON 数组，每个对象格式为 {"path":string,"line":number|null,"body":string}。只报告具体的正确性、安全性或可靠性问题；不要声称绝对确定，不要复述已脱敏的内容。评审意见必须使用中文。\n\n';
+    const fullDiff = state.sanitizedFiles.map((file) => `文件：${file.path}\n${file.patch}`).join('\n\n').slice(0, 110_000);
+    let diff = fullDiff;
+    let budgetTruncated = false;
+    let maxOutputTokens: number | undefined;
+    if (budget > 0) {
+      const remaining = Math.max(0, budget - spent);
+      maxOutputTokens = 2_000;
+      const outputReserve = credential.outputCnyPerMillion * maxOutputTokens;
+      const inputBudget = Math.max(0, remaining - outputReserve);
+      const maxInputTokens = credential.inputCnyPerMillion > 0 ? Math.floor(inputBudget / credential.inputCnyPerMillion) : Number.POSITIVE_INFINITY;
+      const maxDiffChars = Math.max(0, maxInputTokens - conservativeTokenEstimate(instructions) - 128);
+      if (fullDiff.length > maxDiffChars) {
+        diff = fullDiff.slice(0, maxDiffChars);
+        budgetTruncated = true;
+      }
+      const estimatedInput = conservativeTokenEstimate(instructions + diff) + 128;
+      const outputBudget = Math.max(0, remaining - estimatedInput * credential.inputCnyPerMillion);
+      maxOutputTokens = credential.outputCnyPerMillion > 0 ? Math.min(maxOutputTokens, Math.floor(outputBudget / credential.outputCnyPerMillion)) : maxOutputTokens;
+      if (maxOutputTokens < 1) {
+        await step(context.db, state.reviewId, 'model_review', { skipped: '剩余预算不足以调用模型。', budget, spent });
+        return { modelComments: [], truncated: true };
+      }
+    }
+    const prompt = instructions + diff;
+    const model = new ChatOpenAICompletions({ model: modelName, apiKey: credential.token, configuration: { baseURL: openaiBaseUrl(credential.baseUrl) }, temperature: 0, maxTokens: maxOutputTokens, maxRetries: 2 });
     const response = await model.invoke([{ role: 'system', content: '你是一名谨慎的代码评审工程师。只返回有效 JSON，所有评审意见使用简体中文。' }, { role: 'user', content: prompt }]);
     const content = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
     const inputTokens = response.usage_metadata?.input_tokens ?? 0;
@@ -125,8 +155,8 @@ function makeGraph(context: Context, saver: PostgresSaver) {
     const trace = await context.db`INSERT INTO review_traces (review_id, stage, tool_calls, raw_diff_ciphertext, sanitized_prompt, model_response, model, input_tokens, output_tokens, cost_microusd, cost_microcny) VALUES (${state.reviewId}, 'model_review', ${asJson(state.toolCalls)}::jsonb, ${asJson(encrypt(state.files.map((file) => `FILE: ${file.path}\n${file.patch}`).join('\n\n')))}::jsonb, ${prompt}, ${content}, ${modelName || null}, ${inputTokens}, ${outputTokens}, 0, ${cost}) RETURNING id`;
     await context.db`UPDATE reviews SET spent_microcny = spent_microcny + ${cost} WHERE id = ${state.reviewId}`;
     const modelComments = parseModelComments(content).map((comment) => ({ ...comment, evidence: [...comment.evidence, { source: 'trace', detail: String(trace[0].id) }] }));
-    await step(context.db, state.reviewId, 'model_review', { model: modelName, inputTokens, outputTokens, cost, comments: modelComments.length });
-    return { modelComments };
+    await step(context.db, state.reviewId, 'model_review', { model: modelName, inputTokens, outputTokens, cost, comments: modelComments.length, budgetTruncated, maxOutputTokens });
+    return budgetTruncated ? { modelComments, truncated: true } : { modelComments };
   };
 
   const finalize = async (state: WorkflowState) => {
