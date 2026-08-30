@@ -12,10 +12,10 @@ export function createSettingsRepository(db: Database) {
       return rows.map((row) => ({ id: String(row.id), kind: row.kind as ProviderKind, name: row.name, baseUrl: row.base_url || undefined, model: row.model || undefined, inputCnyPerMillion: Number(row.input_cny_per_million), outputCnyPerMillion: Number(row.output_cny_per_million), isEnabled: row.is_enabled, hasSecret: true, createdAt: row.created_at, updatedAt: row.updated_at }));
     },
     async upsertProvider(input: { kind: ProviderKind; name: string; secret: string; baseUrl?: string; model?: string; inputCnyPerMillion?: number; outputCnyPerMillion?: number; isEnabled: boolean }) {
-      const secret = JSON.stringify(encrypt(input.secret));
+      const secret = db.json(encrypt(input.secret));
       await db`
         INSERT INTO provider_configs (kind, name, base_url, encrypted_secret, model, input_cny_per_million, output_cny_per_million, is_enabled)
-        VALUES (${input.kind}, ${input.name}, ${input.baseUrl || null}, ${secret}::jsonb, ${input.model || null}, ${input.inputCnyPerMillion ?? 0}, ${input.outputCnyPerMillion ?? 0}, ${input.isEnabled})
+        VALUES (${input.kind}, ${input.name}, ${input.baseUrl || null}, ${secret}, ${input.model || null}, ${input.inputCnyPerMillion ?? 0}, ${input.outputCnyPerMillion ?? 0}, ${input.isEnabled})
         ON CONFLICT (kind, name) DO UPDATE SET base_url = EXCLUDED.base_url, encrypted_secret = EXCLUDED.encrypted_secret, model = EXCLUDED.model, input_cny_per_million = EXCLUDED.input_cny_per_million, output_cny_per_million = EXCLUDED.output_cny_per_million, is_enabled = EXCLUDED.is_enabled, updated_at = now()
       `;
     },

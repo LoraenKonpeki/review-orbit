@@ -113,4 +113,6 @@ export async function migrate(sql: Database) {
   await sql`ALTER TABLE reviews ADD COLUMN IF NOT EXISTS budget_cny numeric(12,4) NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE reviews ADD COLUMN IF NOT EXISTS spent_microcny bigint NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE review_traces ADD COLUMN IF NOT EXISTS cost_microcny bigint NOT NULL DEFAULT 0`;
+  // Earlier versions double-serialized credential payloads. Convert only JSON strings that contain an object.
+  await sql`UPDATE provider_configs SET encrypted_secret = (encrypted_secret #>> '{}')::jsonb WHERE jsonb_typeof(encrypted_secret) = 'string' AND left(encrypted_secret #>> '{}', 1) = '{'`;
 }
