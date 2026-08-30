@@ -15,14 +15,38 @@ function gitlabUrl(url: URL) {
   return { project: match[1], number: match[2] };
 }
 
+async function fetchWithRetry(url: string, init: RequestInit, label: string) {
+  let lastError: unknown;
+  const method = (init.method || 'GET').toUpperCase();
+  const canRetry = method === 'GET';
+  for (let attempt = 0; attempt < (canRetry ? 4 : 1); attempt += 1) {
+    try {
+      const response = await fetch(url, { ...init, signal: AbortSignal.timeout(20_000) });
+      if (canRetry && [429, 500, 502, 503, 504].includes(response.status) && attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** attempt));
+        continue;
+      }
+      return response;
+    } catch (error) {
+      lastError = error;
+      if (canRetry && attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** attempt));
+        continue;
+      }
+    }
+  }
+  const detail = lastError instanceof Error ? lastError.message : '未知网络错误';
+  throw new Error(`${label}网络请求失败（已重试 ${canRetry ? 4 : 1} 次）：${detail}`);
+}
+
 async function request(url: string, token: string, headers: Record<string, string> = {}) {
-  const response = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', ...headers }, signal: AbortSignal.timeout(20_000) });
+  const response = await fetchWithRetry(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', ...headers } }, 'GitHub ');
   if (!response.ok) throw new Error(`Git 代码平台返回 ${response.status}: ${await response.text()}`);
   return response.json() as Promise<any>;
 }
 
 async function gitlabRequest(url: string, token: string, init: RequestInit = {}) {
-  const response = await fetch(url, { ...init, headers: { 'PRIVATE-TOKEN': token, Accept: 'application/json', ...(init.headers || {}) }, signal: AbortSignal.timeout(20_000) });
+  const response = await fetchWithRetry(url, { ...init, headers: { 'PRIVATE-TOKEN': token, Accept: 'application/json', ...(init.headers || {}) } }, 'GitLab ');
   if (!response.ok) throw new Error(`GitLab 返回 ${response.status}: ${await response.text()}`);
   return response.json() as Promise<any>;
 }
@@ -68,7 +92,7 @@ export async function publishReviewReport(sourceUrl: string, credentials: Creden
     const existing = await request(`${api}/repos/${owner}/${repo}/issues/${number}/comments?per_page=100`, credential.token);
     const match = (existing as any[]).find((comment) => comment.body?.includes(marker));
     if (match) return String(match.id);
-    const response = await fetch(`${api}/repos/${owner}/${repo}/issues/${number}/comments`, { method: 'POST', headers: { Authorization: `Bearer ${credential.token}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' }, body: JSON.stringify({ body }), signal: AbortSignal.timeout(20_000) });
+    const response = await fetchWithRetry(`${api}/repos/${owner}/${repo}/issues/${number}/comments`, { method: 'POST', headers: { Authorization: `Bearer ${credential.token}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' }, body: JSON.stringify({ body }) }, 'GitHub 回评 ');
     if (!response.ok) throw new Error(`GitHub 回评返回 ${response.status}: ${await response.text()}`);
     return String((await response.json() as any).id);
   }
@@ -77,7 +101,7 @@ export async function publishReviewReport(sourceUrl: string, credentials: Creden
   const existing = await gitlabRequest(`${endpoint}?per_page=100`, credential.token);
   const match = (existing as any[]).find((note) => note.body?.includes(marker));
   if (match) return String(match.id);
-  const response = await fetch(endpoint, { method: 'POST', headers: { 'PRIVATE-TOKEN': credential.token, 'Content-Type': 'application/json' }, body: JSON.stringify({ body }), signal: AbortSignal.timeout(20_000) });
+  const response = await fetchWithRetry(endpoint, { method: 'POST', headers: { 'PRIVATE-TOKEN': credential.token, 'Content-Type': 'application/json' }, body: JSON.stringify({ body }) }, 'GitLab 回评 ');
   if (!response.ok) throw new Error(`GitLab 回评返回 ${response.status}: ${await response.text()}`);
   return String((await response.json() as any).id);
 }
