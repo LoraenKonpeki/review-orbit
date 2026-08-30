@@ -15,7 +15,8 @@ export async function migrate(sql: Database) {
       kind text NOT NULL CHECK (kind IN ('openai', 'github', 'gitlab')),
       name text NOT NULL,
       base_url text,
-      encrypted_secret jsonb NOT NULL,
+      secret text NOT NULL,
+      encrypted_secret jsonb,
       model text,
       input_cny_per_million numeric(12,4) NOT NULL DEFAULT 0 CHECK (input_cny_per_million >= 0),
       output_cny_per_million numeric(12,4) NOT NULL DEFAULT 0 CHECK (output_cny_per_million >= 0),
@@ -108,6 +109,8 @@ export async function migrate(sql: Database) {
     CREATE INDEX IF NOT EXISTS review_traces_review_id_idx ON review_traces(review_id);
   `);
   await sql`ALTER TABLE review_traces ADD COLUMN IF NOT EXISTS raw_diff_ciphertext jsonb`;
+  await sql`ALTER TABLE provider_configs ADD COLUMN IF NOT EXISTS secret text`;
+  await sql`ALTER TABLE provider_configs ALTER COLUMN encrypted_secret DROP NOT NULL`;
   await sql`ALTER TABLE provider_configs ADD COLUMN IF NOT EXISTS input_cny_per_million numeric(12,4) NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE provider_configs ADD COLUMN IF NOT EXISTS output_cny_per_million numeric(12,4) NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE provider_configs ADD COLUMN IF NOT EXISTS is_default boolean NOT NULL DEFAULT false`;

@@ -56,7 +56,7 @@ npm install
 npm run dev
 ```
 
-`.env` 中必须配置真实的 32 字节 Base64 `APP_ENCRYPTION_KEY`。生产环境必须将其放在受控密钥管理系统中，并保持稳定，避免历史凭证和 trace 无法解密。
+`.env` 中必须配置真实的 32 字节 Base64 `APP_ENCRYPTION_KEY`，用于加密审计 Trace 中的原始 Diff。密钥应保持稳定，避免历史 Trace 无法解密。
 
 ## Web 管理界面
 
@@ -69,7 +69,7 @@ npm run dev
 ## 安全说明
 
 - 只接受 `https://github.com/.../pull/...` 与 `https://gitlab.com/.../-/merge_requests/...`。
-- token 通过 AES-GCM 加密存储，API 不会返回 token 明文。
+- GitHub/GitLab Token 与 LLM API Key 以明文存储在本机 PostgreSQL 中，API 不会返回凭证明文；仅适用于可信的单机部署，数据库备份与主机访问应受控。
 - 原始 diff 只会加密保存在 trace；模型与普通输出仅接收脱敏版本。
 - `typecheck` 默认关闭；在接入固定版本、无网络、只读的沙箱执行器前，它不会运行任何仓库内容。
 - 生产部署应在 `/api` 前配置 OIDC 或会话认证网关，并只向授权审计人员开放 trace API。
