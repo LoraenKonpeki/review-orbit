@@ -65,8 +65,8 @@ function costMicrocny(input: number, output: number, inputCnyPerMillion: number,
 }
 
 function conservativeTokenEstimate(text: string) {
-  // 不引入 tokenizer；按 1 字符至少 1 Token 估算，宁可提前截断也不冒险超预算。
-  return text.length;
+  // 不引入 tokenizer；按每个字符最多约 2 Token 估算，宁可提前截断也不冒险超预算。
+  return text.length * 2;
 }
 
 function openaiBaseUrl(baseUrl?: string) {
