@@ -1,0 +1,59 @@
+{
+  "name": "review-orbit",
+  "version": "0.1.0",
+  "private": false,
+  "description": "面向中文研发团队的可恢复、可审计、可控预算代码评审 Agent",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LoraenKonpeki/review-orbit.git"
+  },
+  "homepage": "https://github.com/LoraenKonpeki/review-orbit#readme",
+  "bugs": {
+    "url": "https://github.com/LoraenKonpeki/review-orbit/issues"
+  },
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "concurrently -k \"tsx watch src/server/index.ts\" \"vite\"",
+    "dev:server": "tsx watch src/server/index.ts",
+    "dev:web": "vite",
+    "build": "tsc --noEmit && vite build",
+    "start": "tsx src/server/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@langchain/core": "^1.2.9",
+    "@langchain/langgraph": "^1.4.13",
+    "@langchain/langgraph-checkpoint-postgres": "^1.0.5",
+    "@langchain/openai": "^1.5.10",
+    "@fastify/cors": "^11.0.0",
+    "@fastify/static": "^10.1.3",
+    "@sinclair/typebox": "^0.34.0",
+    "fastify": "^5.2.0",
+    "lucide-react": "^0.468.0",
+    "pg-boss": "^12.28.1",
+    "postgres": "^3.4.5",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.18.0",
+    "@types/node": "^22.10.5",
+    "@types/react": "^19.0.3",
+    "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "eslint": "^9.18.0",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "eslint-plugin-react-refresh": "^0.4.18",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.20.0",
+    "vite": "^6.0.7",
+    "vitest": "^2.1.8"
+  }
+}

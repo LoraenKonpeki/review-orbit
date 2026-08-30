@@ -1,0 +1,29 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: review_orbit
+      POSTGRES_PASSWORD: review_orbit
+      POSTGRES_DB: review_orbit
+    ports:
+      - "5432:5432"
+    volumes:
+      - review_orbit_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U review_orbit -d review_orbit"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgres://review_orbit:review_orbit@db:5432/review_orbit
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-ZGV2ZWxvcG1lbnQta2V5LTMyeWJ0ZXMtbG9uZw==}
+      PORT: 3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+volumes:
+  review_orbit_db:
