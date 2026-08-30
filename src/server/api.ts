@@ -40,6 +40,20 @@ export async function registerApi(app: FastifyInstance, db: Database, queue: Rev
     await settings.setProviderEnabled((request.params as { id: string }).id, body.isEnabled);
     return { ok: true };
   });
+  app.patch('/api/providers/:id/default', async (request, reply) => {
+    const id = (request.params as { id: string }).id;
+    const exists = await db`SELECT id FROM provider_configs WHERE id = ${id}`;
+    if (!exists.length) return reply.code(404).send({ error: '服务商配置不存在' });
+    await settings.setDefaultProvider(id);
+    return { ok: true };
+  });
+  app.delete('/api/providers/:id', async (request, reply) => {
+    const id = (request.params as { id: string }).id;
+    const exists = await db`SELECT id FROM provider_configs WHERE id = ${id}`;
+    if (!exists.length) return reply.code(404).send({ error: '服务商配置不存在' });
+    await settings.deleteProvider(id);
+    return { ok: true };
+  });
   app.put('/api/providers/:id', async (request, reply) => {
     const id = (request.params as { id: string }).id;
     const input = parse(providerUpdateSchema, request.body);

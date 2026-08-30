@@ -20,6 +20,7 @@ export async function migrate(sql: Database) {
       input_cny_per_million numeric(12,4) NOT NULL DEFAULT 0 CHECK (input_cny_per_million >= 0),
       output_cny_per_million numeric(12,4) NOT NULL DEFAULT 0 CHECK (output_cny_per_million >= 0),
       is_enabled boolean NOT NULL DEFAULT true,
+      is_default boolean NOT NULL DEFAULT false,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now(),
       UNIQUE(kind, name)
@@ -109,6 +110,20 @@ export async function migrate(sql: Database) {
   await sql`ALTER TABLE review_traces ADD COLUMN IF NOT EXISTS raw_diff_ciphertext jsonb`;
   await sql`ALTER TABLE provider_configs ADD COLUMN IF NOT EXISTS input_cny_per_million numeric(12,4) NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE provider_configs ADD COLUMN IF NOT EXISTS output_cny_per_million numeric(12,4) NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE provider_configs ADD COLUMN IF NOT EXISTS is_default boolean NOT NULL DEFAULT false`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS provider_configs_default_kind_idx ON provider_configs (kind) WHERE is_default`;
+  await sql`
+    UPDATE provider_configs candidate
+    SET is_default = true
+    WHERE candidate.is_enabled
+      AND NOT EXISTS (SELECT 1 FROM provider_configs selected WHERE selected.kind = candidate.kind AND selected.is_default)
+      AND candidate.id = (
+        SELECT id FROM provider_configs latest
+        WHERE latest.kind = candidate.kind AND latest.is_enabled
+        ORDER BY latest.updated_at DESC
+        LIMIT 1
+      )
+  `;
   await sql`ALTER TABLE review_policies ADD COLUMN IF NOT EXISTS budget_cny numeric(12,4) NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE reviews ADD COLUMN IF NOT EXISTS budget_cny numeric(12,4) NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE reviews ADD COLUMN IF NOT EXISTS spent_microcny bigint NOT NULL DEFAULT 0`;
