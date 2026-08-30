@@ -8,7 +8,7 @@ import { redactSecrets } from './security.js';
 import { runEnabledTools } from './tools.js';
 import type { DiffFile, ReviewComment } from '../shared/types.js';
 
-type LlmCredential = { token: string; model?: string; baseUrl?: string } | undefined;
+type LlmCredential = { token: string; model?: string; baseUrl?: string; inputCnyPerMillion: number; outputCnyPerMillion: number } | undefined;
 type Context = { db: Database; credentials: CredentialLookup; openai: () => Promise<LlmCredential> };
 type WorkflowState = {
   reviewId: string;
@@ -57,10 +57,9 @@ function parseModelComments(content: string): ReviewComment[] {
   } catch { return []; }
 }
 
-function costMicrousd(input: number, output: number, model: string) {
-  // Conservative default rates; operators may adjust model routing without altering review semantics.
-  const premium = /gpt-4\.1(?!-nano)|gpt-5/.test(model);
-  return Math.ceil(input * (premium ? 3 : 0.4) + output * (premium ? 12 : 1.6));
+function costMicrocny(input: number, output: number, inputCnyPerMillion: number, outputCnyPerMillion: number) {
+  // 1 CNY / 百万 Token 恰好等于每个 Token 1 微元，避免浮点换算误差。
+  return Math.ceil(input * inputCnyPerMillion + output * outputCnyPerMillion);
 }
 
 function makeGraph(context: Context, saver: PostgresSaver) {
@@ -103,20 +102,20 @@ function makeGraph(context: Context, saver: PostgresSaver) {
       await step(context.db, state.reviewId, 'model_review', { skipped: '未配置已启用的 OpenAI 服务商。' });
       return { modelComments: [] };
     }
-    const policy = await context.db`SELECT budget_cents, primary_model, fallback_model FROM review_policies WHERE id = true`;
-    const reviewRow = await context.db`SELECT spent_microusd FROM reviews WHERE id = ${state.reviewId}`;
-    const budget = BigInt((policy[0]?.budget_cents ?? 1000) * 10_000);
-    const spent = BigInt(reviewRow[0]?.spent_microusd ?? 0);
-    const modelName = spent > budget * 7n / 10n ? policy[0]?.fallback_model : (credential.model || policy[0]?.primary_model);
+    const policy = await context.db`SELECT budget_cny, fallback_model FROM review_policies WHERE id = true`;
+    const reviewRow = await context.db`SELECT spent_microcny FROM reviews WHERE id = ${state.reviewId}`;
+    const budget = Math.round(Number(policy[0]?.budget_cny ?? 0) * 1_000_000);
+    const spent = Number(reviewRow[0]?.spent_microcny ?? 0);
+    const modelName = budget > 0 && spent > budget * 0.7 ? policy[0]?.fallback_model : credential.model;
     const prompt = `请审查以下已脱敏的 PR/MR diff。只返回 JSON 数组，每个对象格式为 {"path":string,"line":number|null,"body":string}。只报告具体的正确性、安全性或可靠性问题；不要声称绝对确定，不要复述已脱敏的内容。评审意见必须使用中文。\n\n${state.sanitizedFiles.map((file) => `文件：${file.path}\n${file.patch}`).join('\n\n').slice(0, 110_000)}`;
     const model = new ChatOpenAI({ model: modelName, apiKey: credential.token, configuration: credential.baseUrl ? { baseURL: credential.baseUrl } : undefined, temperature: 0 });
     const response = await model.invoke([{ role: 'system', content: '你是一名谨慎的代码评审工程师。只返回有效 JSON，所有评审意见使用简体中文。' }, { role: 'user', content: prompt }]);
     const content = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
     const inputTokens = response.usage_metadata?.input_tokens ?? 0;
     const outputTokens = response.usage_metadata?.output_tokens ?? 0;
-    const cost = costMicrousd(inputTokens, outputTokens, modelName || '');
-    const trace = await context.db`INSERT INTO review_traces (review_id, stage, tool_calls, raw_diff_ciphertext, sanitized_prompt, model_response, model, input_tokens, output_tokens, cost_microusd) VALUES (${state.reviewId}, 'model_review', ${asJson([])}::jsonb, ${asJson(encrypt(state.files.map((file) => `FILE: ${file.path}\n${file.patch}`).join('\n\n')))}::jsonb, ${prompt}, ${content}, ${modelName || null}, ${inputTokens}, ${outputTokens}, ${cost}) RETURNING id`;
-    await context.db`UPDATE reviews SET spent_microusd = spent_microusd + ${cost} WHERE id = ${state.reviewId}`;
+    const cost = costMicrocny(inputTokens, outputTokens, credential.inputCnyPerMillion, credential.outputCnyPerMillion);
+    const trace = await context.db`INSERT INTO review_traces (review_id, stage, tool_calls, raw_diff_ciphertext, sanitized_prompt, model_response, model, input_tokens, output_tokens, cost_microusd, cost_microcny) VALUES (${state.reviewId}, 'model_review', ${asJson([])}::jsonb, ${asJson(encrypt(state.files.map((file) => `FILE: ${file.path}\n${file.patch}`).join('\n\n')))}::jsonb, ${prompt}, ${content}, ${modelName || null}, ${inputTokens}, ${outputTokens}, 0, ${cost}) RETURNING id`;
+    await context.db`UPDATE reviews SET spent_microcny = spent_microcny + ${cost} WHERE id = ${state.reviewId}`;
     const modelComments = parseModelComments(content).map((comment) => ({ ...comment, evidence: [...comment.evidence, { source: 'trace', detail: String(trace[0].id) }] }));
     await step(context.db, state.reviewId, 'model_review', { model: modelName, inputTokens, outputTokens, cost, comments: modelComments.length });
     return { modelComments };

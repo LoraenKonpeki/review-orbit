@@ -6,7 +6,7 @@ import type { CredentialLookup } from './providers.js';
 const queueName = 'review.execute';
 export type ReviewQueue = { enqueue(reviewId: string, sourceUrl: string, outputMode: 'report' | 'publish'): Promise<void>; stop(): Promise<void> };
 
-export async function createReviewQueue(db: Database, credentials: CredentialLookup, openai: () => Promise<{ token: string; model?: string; baseUrl?: string } | undefined>): Promise<ReviewQueue> {
+export async function createReviewQueue(db: Database, credentials: CredentialLookup, openai: () => Promise<{ token: string; model?: string; baseUrl?: string; inputCnyPerMillion: number; outputCnyPerMillion: number } | undefined>): Promise<ReviewQueue> {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) throw new Error('DATABASE_URL is required.');
   const workflow = await createReviewWorkflow({ db, credentials, openai });

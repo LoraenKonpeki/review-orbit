@@ -7,8 +7,8 @@ import { toolManifests } from './tools.js';
 import type { ReviewQueue } from './queue.js';
 import { createSettingsRepository } from './settings.js';
 
-const providerSchema = z.object({ kind: z.enum(['openai', 'github', 'gitlab']), name: z.string().min(1).max(80), secret: z.string().min(8), baseUrl: z.string().url().optional().or(z.literal('')), model: z.string().max(120).optional(), isEnabled: z.boolean().default(true) });
-const policySchema = z.object({ budgetCents: z.number().int().min(1).max(1_000_000), primaryModel: z.string().min(1).max(120), fallbackModel: z.string().min(1).max(120), maxFiles: z.number().int().min(1).max(500), maxDiffLines: z.number().int().min(100).max(100_000) });
+const providerSchema = z.object({ kind: z.enum(['openai', 'github', 'gitlab']), name: z.string().min(1).max(80), secret: z.string().min(8), baseUrl: z.string().url().optional().or(z.literal('')), model: z.string().max(120).optional(), inputCnyPerMillion: z.number().min(0).max(1_000_000).optional(), outputCnyPerMillion: z.number().min(0).max(1_000_000).optional(), isEnabled: z.boolean().default(true) });
+const policySchema = z.object({ budgetCny: z.number().min(0).max(1_000_000), fallbackModel: z.string().min(1).max(120), maxFiles: z.number().int().min(1).max(500), maxDiffLines: z.number().int().min(100).max(100_000) });
 const reviewSchema = z.object({ sourceUrl: z.string().url(), outputMode: z.enum(['report', 'publish']).default('report') });
 
 function parse<T>(schema: z.ZodType<T>, value: unknown): T {
@@ -23,8 +23,8 @@ export async function registerApi(app: FastifyInstance, db: Database, queue: Rev
 
   app.get('/api/health', async () => ({ ok: true, service: 'review-orbit' }));
   app.get('/api/dashboard', async () => {
-    const [stats] = await db`SELECT count(*) FILTER (WHERE status = 'running')::int AS running, count(*) FILTER (WHERE status = 'queued')::int AS queued, count(*) FILTER (WHERE status IN ('completed','partial'))::int AS completed, coalesce(sum(spent_microusd), 0)::bigint AS spent FROM reviews WHERE created_at >= now() - interval '30 days'`;
-    const recent = await db`SELECT id, title, repository, change_number, status, current_step, budget_cents, spent_microusd, created_at FROM reviews ORDER BY created_at DESC LIMIT 6`;
+    const [stats] = await db`SELECT count(*) FILTER (WHERE status = 'running')::int AS running, count(*) FILTER (WHERE status = 'queued')::int AS queued, count(*) FILTER (WHERE status IN ('completed','partial'))::int AS completed, coalesce(sum(spent_microcny), 0)::bigint AS spent FROM reviews WHERE created_at >= now() - interval '30 days'`;
+    const recent = await db`SELECT id, title, repository, change_number, status, current_step, budget_cny, spent_microcny, created_at FROM reviews ORDER BY created_at DESC LIMIT 6`;
     return { stats, recent };
   });
 
@@ -59,14 +59,14 @@ export async function registerApi(app: FastifyInstance, db: Database, queue: Rev
     return { ok: true };
   });
 
-  app.get('/api/reviews', async () => db`SELECT id, source_url, provider, repository, change_number, title, status, current_step, output_mode, budget_cents, spent_microusd, summary, error, created_at, updated_at, completed_at FROM reviews ORDER BY created_at DESC LIMIT 100`);
+  app.get('/api/reviews', async () => db`SELECT id, source_url, provider, repository, change_number, title, status, current_step, output_mode, budget_cny, spent_microcny, summary, error, created_at, updated_at, completed_at FROM reviews ORDER BY created_at DESC LIMIT 100`);
   app.post('/api/reviews', async (request, reply) => {
     const input = parse(reviewSchema, request.body);
     const url = assertSupportedChangeUrl(input.sourceUrl);
     const policy = await settings.policy();
     const provider = url.hostname === 'github.com' ? 'github' : 'gitlab';
     const outputMode = input.outputMode ?? 'report';
-    const rows = await db`INSERT INTO reviews (source_url, provider, output_mode, budget_cents) VALUES (${input.sourceUrl}, ${provider}, ${outputMode}, ${policy.budget_cents}) RETURNING id`;
+    const rows = await db`INSERT INTO reviews (source_url, provider, output_mode, budget_cents, budget_cny) VALUES (${input.sourceUrl}, ${provider}, ${outputMode}, 0, ${policy.budget_cny}) RETURNING id`;
     await queue.enqueue(String(rows[0].id), input.sourceUrl, outputMode);
     return reply.code(201).send({ id: rows[0].id });
   });
@@ -110,6 +110,6 @@ export async function registerApi(app: FastifyInstance, db: Database, queue: Rev
     const trace = rows[0];
     let rawDiff: string | undefined;
     try { rawDiff = trace.raw_diff_ciphertext ? decrypt(trace.raw_diff_ciphertext) : trace.raw_diff || undefined; } catch { rawDiff = '[无法解密追踪数据]'; }
-    return { id: trace.id, reviewId: trace.review_id, stage: trace.stage, toolCalls: trace.tool_calls, rawDiff, sanitizedPrompt: trace.sanitized_prompt, modelResponse: trace.model_response, model: trace.model, inputTokens: trace.input_tokens, outputTokens: trace.output_tokens, costMicrousd: trace.cost_microusd, createdAt: trace.created_at };
+    return { id: trace.id, reviewId: trace.review_id, stage: trace.stage, toolCalls: trace.tool_calls, rawDiff, sanitizedPrompt: trace.sanitized_prompt, modelResponse: trace.model_response, model: trace.model, inputTokens: trace.input_tokens, outputTokens: trace.output_tokens, costMicrocny: trace.cost_microcny, createdAt: trace.created_at };
   });
 }

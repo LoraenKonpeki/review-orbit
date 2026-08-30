@@ -17,6 +17,8 @@ export async function migrate(sql: Database) {
       base_url text,
       encrypted_secret jsonb NOT NULL,
       model text,
+      input_cny_per_million numeric(12,4) NOT NULL DEFAULT 0 CHECK (input_cny_per_million >= 0),
+      output_cny_per_million numeric(12,4) NOT NULL DEFAULT 0 CHECK (output_cny_per_million >= 0),
       is_enabled boolean NOT NULL DEFAULT true,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now(),
@@ -25,6 +27,7 @@ export async function migrate(sql: Database) {
     CREATE TABLE IF NOT EXISTS review_policies (
       id boolean PRIMARY KEY DEFAULT true CHECK (id),
       budget_cents integer NOT NULL DEFAULT 1000 CHECK (budget_cents > 0),
+      budget_cny numeric(12,4) NOT NULL DEFAULT 0 CHECK (budget_cny >= 0),
       primary_model text NOT NULL DEFAULT 'gpt-4.1-mini',
       fallback_model text NOT NULL DEFAULT 'gpt-4.1-nano',
       max_files integer NOT NULL DEFAULT 120,
@@ -49,7 +52,9 @@ export async function migrate(sql: Database) {
       current_step text NOT NULL DEFAULT 'queued',
       output_mode text NOT NULL DEFAULT 'report' CHECK (output_mode IN ('report','publish')),
       budget_cents integer NOT NULL,
+      budget_cny numeric(12,4) NOT NULL DEFAULT 0,
       spent_microusd bigint NOT NULL DEFAULT 0,
+      spent_microcny bigint NOT NULL DEFAULT 0,
       input_snapshot jsonb,
       summary text,
       error text,
@@ -95,10 +100,17 @@ export async function migrate(sql: Database) {
       input_tokens integer,
       output_tokens integer,
       cost_microusd bigint NOT NULL DEFAULT 0,
+      cost_microcny bigint NOT NULL DEFAULT 0,
       created_at timestamptz NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS review_comments_review_id_idx ON review_comments(review_id);
     CREATE INDEX IF NOT EXISTS review_traces_review_id_idx ON review_traces(review_id);
   `);
   await sql`ALTER TABLE review_traces ADD COLUMN IF NOT EXISTS raw_diff_ciphertext jsonb`;
+  await sql`ALTER TABLE provider_configs ADD COLUMN IF NOT EXISTS input_cny_per_million numeric(12,4) NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE provider_configs ADD COLUMN IF NOT EXISTS output_cny_per_million numeric(12,4) NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE review_policies ADD COLUMN IF NOT EXISTS budget_cny numeric(12,4) NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE reviews ADD COLUMN IF NOT EXISTS budget_cny numeric(12,4) NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE reviews ADD COLUMN IF NOT EXISTS spent_microcny bigint NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE review_traces ADD COLUMN IF NOT EXISTS cost_microcny bigint NOT NULL DEFAULT 0`;
 }
