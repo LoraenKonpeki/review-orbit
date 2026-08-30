@@ -21,6 +21,7 @@ type WorkflowState = {
   toolCalls: Array<{ id: string; detail: string; findings: number }>;
   allComments: ReviewComment[];
   truncated: boolean;
+  budgetLimited: boolean;
 };
 
 const State = Annotation.Root({
@@ -33,7 +34,8 @@ const State = Annotation.Root({
   modelComments: Annotation<ReviewComment[]>({ value: (_left, right) => right, default: () => [] }),
   toolCalls: Annotation<Array<{ id: string; detail: string; findings: number }>>({ value: (_left, right) => right, default: () => [] }),
   allComments: Annotation<ReviewComment[]>({ value: (_left, right) => right, default: () => [] }),
-  truncated: Annotation<boolean>({ value: (_left, right) => right, default: () => false })
+  truncated: Annotation<boolean>({ value: (_left, right) => right, default: () => false }),
+  budgetLimited: Annotation<boolean>({ value: (_left, right) => right, default: () => false })
 });
 
 function asJson(value: unknown) { return JSON.stringify(value); }
@@ -113,7 +115,7 @@ function makeGraph(context: Context, saver: PostgresSaver) {
     const credential = await context.openai();
     if (!credential) {
       await step(context.db, state.reviewId, 'model_review', { skipped: '未配置已启用的 OpenAI 服务商。' });
-      return { modelComments: [] };
+      return { modelComments: [], budgetLimited: false };
     }
     const policy = await context.db`SELECT budget_cny, fallback_model FROM review_policies WHERE id = true`;
     const reviewRow = await context.db`SELECT spent_microcny FROM reviews WHERE id = ${state.reviewId}`;
@@ -142,7 +144,7 @@ function makeGraph(context: Context, saver: PostgresSaver) {
       maxOutputTokens = credential.outputCnyPerMillion > 0 ? Math.min(maxOutputTokens, Math.floor(outputBudget / credential.outputCnyPerMillion)) : maxOutputTokens;
       if (maxOutputTokens < 1) {
         await step(context.db, state.reviewId, 'model_review', { skipped: '剩余预算不足以调用模型。', budget, spent });
-        return { modelComments: [], truncated: true };
+        return { modelComments: [], truncated: true, budgetLimited: true };
       }
     }
     const prompt = instructions + diff;
@@ -156,7 +158,9 @@ function makeGraph(context: Context, saver: PostgresSaver) {
     await context.db`UPDATE reviews SET spent_microcny = spent_microcny + ${cost} WHERE id = ${state.reviewId}`;
     const modelComments = parseModelComments(content).map((comment) => ({ ...comment, evidence: [...comment.evidence, { source: 'trace', detail: String(trace[0].id) }] }));
     await step(context.db, state.reviewId, 'model_review', { model: modelName, inputTokens, outputTokens, cost, comments: modelComments.length, budgetTruncated, maxOutputTokens });
-    return budgetTruncated ? { modelComments, truncated: true } : { modelComments };
+    return budgetTruncated
+      ? { modelComments, truncated: true, budgetLimited: true }
+      : { modelComments, budgetLimited: false };
   };
 
   const finalize = async (state: WorkflowState) => {
@@ -168,13 +172,15 @@ function makeGraph(context: Context, saver: PostgresSaver) {
       const inserted = await context.db`INSERT INTO review_comments (review_id, fingerprint, path, line, body, confidence, evidence, trace_id) VALUES (${state.reviewId}, ${fingerprint}, ${comment.path}, ${comment.line ?? null}, ${comment.body}, ${comment.confidence}, ${asJson(comment.evidence)}::jsonb, ${traceId}) ON CONFLICT (review_id, fingerprint) DO NOTHING RETURNING id`;
       if (inserted.length) await context.db`UPDATE review_traces SET comment_id = ${inserted[0].id} WHERE id = ${traceId}`;
     }
-    if (state.outputMode === 'publish') {
+    if (state.outputMode === 'publish' && !state.truncated) {
       const externalId = await publishReviewReport(state.sourceUrl, context.credentials, state.reviewId, allComments);
       await context.db`UPDATE review_comments SET external_comment_id = ${externalId} WHERE review_id = ${state.reviewId}`;
       await step(context.db, state.reviewId, 'publish', { externalCommentId: externalId });
     }
     const status = state.truncated ? 'partial' : 'completed';
-    const summary = `已生成 ${allComments.length} 条评审意见${state.truncated ? '；输入已按策略限制截断。' : '。'}`;
+    const summary = state.budgetLimited
+      ? `已生成 ${allComments.length} 条评审意见；因预算限制已截断输入或输出，未回评代码平台。建议上调预算或调整当前模型后重试。`
+      : `已生成 ${allComments.length} 条评审意见${state.truncated ? '；输入已按策略限制截断，未回评代码平台。' : '。'}`;
     await context.db`UPDATE reviews SET status = ${status}, current_step = 'complete', summary = ${summary}, completed_at = now(), updated_at = now() WHERE id = ${state.reviewId}`;
     await step(context.db, state.reviewId, 'finalize', { comments: allComments.length, status });
     return { allComments };

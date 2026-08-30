@@ -123,6 +123,7 @@ export async function registerApi(app: FastifyInstance, db: Database, queue: Rev
     const comments = await db`SELECT path, line, body, confidence, evidence FROM review_comments WHERE review_id = ${id} ORDER BY path, line`;
     const statusLabels: Record<string, string> = { queued: '排队中', running: '执行中', completed: '已完成', partial: '部分完成', failed: '失败', cancelled: '已取消' };
     const report = [`# 代码评审：${review[0].title || review[0].repository || id}`, '', `- 状态：${statusLabels[review[0].status] || review[0].status}`, `- 来源：${review[0].repository || '等待拉取'}${review[0].change_number ? ` #${review[0].change_number}` : ''}`, `- 摘要：${review[0].summary || '执行中'}`, '', '## 评审发现', ''];
+    if (review[0].status === 'partial') report.splice(5, 0, '> 注意：本次评审未完整完成，部分输入或输出受到限制。建议上调预算或调整当前模型后重试；为避免不完整意见误导，本次未自动回评代码平台。', '');
     report.push(...comments.map((comment) => `### ${comment.confidence === 'high' ? '高置信度，可直接采纳' : '仅供参考'}：\`${comment.path}${comment.line ? `:${comment.line}` : ''}\`\n\n${comment.body}\n\n证据：${(comment.evidence as Array<{ source: string }>).map((item) => item.source).join(', ')}`));
     return reply.type('text/markdown; charset=utf-8').send(report.join('\n'));
   });
