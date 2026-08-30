@@ -57,7 +57,12 @@ export function createSettingsRepository(db: Database) {
       const rows = await db`SELECT encrypted_secret, base_url, model, input_cny_per_million, output_cny_per_million FROM provider_configs WHERE kind = ${kind} AND is_enabled = true ORDER BY is_default DESC, updated_at DESC LIMIT 1`;
       if (!rows.length) return undefined;
       const cipher = rows[0].encrypted_secret as StoredCiphertext;
-      return { token: decrypt(cipher), baseUrl: rows[0].base_url || undefined, model: rows[0].model || undefined, inputCnyPerMillion: Number(rows[0].input_cny_per_million), outputCnyPerMillion: Number(rows[0].output_cny_per_million) };
+      try {
+        return { token: decrypt(cipher), baseUrl: rows[0].base_url || undefined, model: rows[0].model || undefined, inputCnyPerMillion: Number(rows[0].input_cny_per_million), outputCnyPerMillion: Number(rows[0].output_cny_per_million) };
+      } catch {
+        const label: Record<ProviderKind, string> = { github: 'GitHub Token', gitlab: 'GitLab Token', openai: 'LLM API Key' };
+        throw new Error(`已保存的 ${label[kind]} 无法解密。请在连接设置中重新输入凭证后重试任务。`);
+      }
     },
     async policy() {
       const rows = await db`SELECT budget_cny, primary_model, fallback_model, max_files, max_diff_lines, updated_at FROM review_policies WHERE id = true`;

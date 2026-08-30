@@ -1,6 +1,6 @@
 {
   "name": "review-orbit",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": false,
   "description": "面向中文研发团队的可恢复、可审计、可控预算代码评审 Agent",
   "license": "MIT",

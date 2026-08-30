@@ -18,7 +18,7 @@ services:
     build: .
     environment:
       DATABASE_URL: postgres://review_orbit:review_orbit@db:5432/review_orbit
-      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-ZGV2ZWxvcG1lbnQta2V5LTMyeWJ0ZXMtbG9uZw==}
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?请先配置稳定的 32 字节 Base64 APP_ENCRYPTION_KEY}
       PORT: 3000
     ports:
       - "3000:3000"
