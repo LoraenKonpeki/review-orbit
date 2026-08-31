@@ -62,7 +62,7 @@ docker compose up --build
 
 请妥善保存 `.env` 中的密钥。更换密钥会导致历史 Trace 中加密保存的原始 Diff 无法解密。
 
-### 使用已发布镜像
+### 直接部署已发布镜像
 
 每个 `v*` 版本 tag 都会自动发布多架构镜像到 GitHub Container Registry：
 
@@ -71,7 +71,22 @@ ghcr.io/loraenkonpeki/review-orbit:<版本号>
 ghcr.io/loraenkonpeki/review-orbit:latest
 ```
 
-例如，将 `docker-compose.yml` 中 `app` 服务的 `build: .` 替换为 `image: ghcr.io/loraenkonpeki/review-orbit:v0.1.12`，并保留 `APP_ENCRYPTION_KEY` 与 `DATABASE_URL` 环境变量，即可使用发布镜像启动。
+项目提供了独立的 [docker-compose.ghcr.yml](docker-compose.ghcr.yml)，无需本地构建或修改默认 Compose 文件。先按上方的系统说明生成稳定的 `.env`，然后选择一个已发布版本启动：
+
+```bash
+REVIEW_ORBIT_IMAGE_TAG=0.1.12 docker compose -f docker-compose.ghcr.yml pull
+REVIEW_ORBIT_IMAGE_TAG=0.1.12 docker compose -f docker-compose.ghcr.yml up -d
+```
+
+Windows PowerShell：
+
+```powershell
+$env:REVIEW_ORBIT_IMAGE_TAG = "0.1.12"
+docker compose -f docker-compose.ghcr.yml pull
+docker compose -f docker-compose.ghcr.yml up -d
+```
+
+省略 `REVIEW_ORBIT_IMAGE_TAG` 时默认使用 `latest`。生产环境建议固定使用具体版本号；升级时修改版本号后再次执行以上两条命令。
 
 访问 `http://localhost:3000`，在“服务商与策略”中添加：
 
