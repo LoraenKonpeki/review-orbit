@@ -1,7 +1,8 @@
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY package.json ./
-RUN npm install
+COPY package-lock.json ./
+RUN npm ci --fetch-retries=4 --fetch-retry-mintimeout=1000 --fetch-retry-maxtimeout=10000
 COPY . .
 RUN npm run build
 

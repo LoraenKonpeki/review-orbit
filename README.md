@@ -37,10 +37,41 @@ Markdown 报告 或 回评到 PR / MR
 
 要求：Node.js 22+、Docker 与 Docker Compose。
 
+### macOS / Linux
+
 ```bash
 export APP_ENCRYPTION_KEY="$(openssl rand -base64 32)"
 docker compose up --build
 ```
+
+### Windows PowerShell
+
+在项目根目录执行以下命令，密钥会写入本机 `.env` 文件，再由 Docker Compose 读取：
+
+```powershell
+$key = [Convert]::ToBase64String((1..32 | ForEach-Object { Get-Random -Maximum 256 }))
+"APP_ENCRYPTION_KEY=$key" | Set-Content .env -Encoding ascii
+docker compose up --build
+```
+
+后续重启无需重新生成密钥，直接执行：
+
+```powershell
+docker compose up --build
+```
+
+请妥善保存 `.env` 中的密钥。更换密钥会导致历史 Trace 中加密保存的原始 Diff 无法解密。
+
+### 使用已发布镜像
+
+每个 `v*` 版本 tag 都会自动发布多架构镜像到 GitHub Container Registry：
+
+```text
+ghcr.io/loraenkonpeki/review-orbit:<版本号>
+ghcr.io/loraenkonpeki/review-orbit:latest
+```
+
+例如，将 `docker-compose.yml` 中 `app` 服务的 `build: .` 替换为 `image: ghcr.io/loraenkonpeki/review-orbit:v0.1.12`，并保留 `APP_ENCRYPTION_KEY` 与 `DATABASE_URL` 环境变量，即可使用发布镜像启动。
 
 访问 `http://localhost:3000`，在“服务商与策略”中添加：
 
